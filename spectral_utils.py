@@ -12,11 +12,16 @@ def ws_to_adj(ws):
     y = 0
     for w in ws:
         #print("{}:{}, {}:{}".format(x, x+w.shape[1], y, y+w.shape[0]))
-        adj[x:(x+w.shape[0]), y:(y+w.shape[1])] = w
-        adj[y:(y+w.shape[1]), x:(x+w.shape[0])] = w.transpose(-2, -1)
+        adj[x:(x+w.shape[0]), y:(y+w.shape[1])] = torch.abs(w)
+        adj[y:(y+w.shape[1]), x:(x+w.shape[0])] = torch.abs(w).transpose(-2, -1)
         x += w.shape[0]
         y += w.shape[1]
     return adj
+
+def normalize_w(w):
+    d1_inv_root = torch.diag(1/torch.sqrt(torch.abs(w).sum(1)))
+    d2_inv_root = torch.diag(1/torch.sqrt(torch.abs(w).sum(0)))
+    return torch.matmul(torch.matmul(d1_inv_root, torch.abs(w)), d2_inv_root)
 
 def laplacian(adj, norm='sym'):
     w = torch.abs(adj)
@@ -29,8 +34,12 @@ def laplacian(adj, norm='sym'):
     else:
         raise Exception("Don't know the {} norm".format(norm))
 
-def block_diag_perm(adj, evals, evecs):
-    # input: adjacency matrix, list of eigen values (ascending order), list of the corresponding eigen eigenvectors
-    # output: matrix close to a block diagonal. Number of blocks equals to the number of provided eigen values
-    evals = evals.numpy()
-    evecs = evecs.numpy()
+def blocks_from_svd(u, ncc):
+    u = u[:, :ncc].detach().cpu().numpy()
+    uset = []
+    blocks = []
+    for x in (u>0):
+        if str(x) not in uset:
+            uset.append(str(x))
+        blocks.append(uset.index(str(x)))
+    return np.array(blocks)

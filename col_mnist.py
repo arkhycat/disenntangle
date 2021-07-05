@@ -23,11 +23,13 @@ def coloring_frame(img):
     img_digit = img
     #img_background = (1-img) * bclr.to(device)
     new_shape = [int(x) for x in img.shape]
-    new_shape[0] += 6
-    new_shape[1] += 6
+    new_shape[0] += 8
+    new_shape[1] += 8
     img_background = torch.zeros(new_shape, device=device)
-    img_background[:, :, :] = bclr
-    img_background[3:-3, 3:-3, :] = img
+    digit_size = img[:, :, 0].sum()
+    img_background[:int(digit_size/8), :, :] = bclr
+    #img_background[:, :, :] = bclr
+    img_background[4:-4, 4:-4, :] = img
     return img_background.transpose(0, 2), dclr_idx, bclr_idx
 
 class ColMNIST(torchvision.datasets.MNIST):
