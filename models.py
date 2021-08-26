@@ -46,18 +46,26 @@ def block_regularizer(layer, ncc):
     return ncc - torch.sum(s[:ncc])
 
 class BlockDropout(nn.Dropout):
-    def __init__(self, layer, ncc, apply_to="out"):
+    def __init__(self, layer, ncc, p=0.5, apply_to="out"):
         super().__init__()
         self.layer = layer
         self.n_conn_comp = ncc
         self.apply_to = apply_to
+        self.p = p
 
-    def forward(self, input, do_rate=0.5):
+    def forward(self, input, do_rate=0):
+        if do_rate == 0:
+            do_rate = self.p
         if self.training and self.n_conn_comp > 1:
             if self.apply_to=="out":
                 blocks = compute_layer_blocks_out(self.layer, self.n_conn_comp)
             else:
                 blocks = compute_layer_blocks_in(self.layer, self.n_conn_comp)
+            #print(blocks.shape)
+            #blocks = np.zeros(input.shape[1])
+            #blocks[:int(input.shape[0]/2)] = 1
+
+            #print(blocks.shape)
             return block_dropout(input, blocks, do_rate)
         return input
 

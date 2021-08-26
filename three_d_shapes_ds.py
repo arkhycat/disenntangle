@@ -6,11 +6,22 @@ import h5py
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class ThreeDShapes(Dataset):
-    def __init__(self, transform = None):
+    def __init__(self, transform = None, filtered = False):
         super(Dataset, self).__init__()
         self.dataset = h5py.File('3dshapes.h5', 'r')
         self.images = self.dataset['images']  # array shape [480000,64,64,3], uint8 in range(256)
         self.labels = self.dataset['labels']  # array shape [480000,6], float64
+        if filtered:
+            l = self.labels
+            loc = np.where((l[:, 0] <= 0.1) & 
+                            (l[:, 1] <= 0.1) & 
+                            (l[:, 2] <= 0.1) & 
+                            #(l[:, 3] <= 0.13) & 
+                            (l[:, 4] <= 1))# & 
+                            #(l[:, 5] <= -25))
+            self.images = self.images[loc[0]]
+            self.labels = self.labels[loc[0]]
+
         self.image_shape = self.images.shape[1:]  # [64,64,3]
         self.label_shape = self.labels.shape[1:]  # [6]
         self.n_samples = self.labels.shape[0]  # 10*10*10*8*4*15=480000

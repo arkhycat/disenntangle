@@ -23,14 +23,14 @@ class Trainer:
               ColMNIST('data/mnist', train=True, download=True,
                                          transform=torchvision.transforms.Compose([#torchvision.transforms.Resize((224, 224)),
                                            torchvision.transforms.ToTensor(),
-                                         ])),
+                                         ]), only_frame=False),
               batch_size=batch_size_train, shuffle=True, num_workers = args.n_workers)
 
             self.test_loader = torch.utils.data.DataLoader(
               ColMNIST('data/mnist', train=False, download=True,
                                          transform=torchvision.transforms.Compose([#torchvision.transforms.Resize((224, 224)),
                                            torchvision.transforms.ToTensor()
-                                         ])),
+                                         ]), only_frame=False),
               batch_size=batch_size_test, shuffle=True, num_workers = args.n_workers)
         elif args.dataset == 'split':
             self.train_loader = torch.utils.data.DataLoader(SplitDS(), batch_size=32, shuffle=True, num_workers = args.n_workers)
@@ -62,7 +62,7 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
         self.n_conn_comp = args.connected_components
         self.bn_size = args.bn_size
-        self.bn_size_reduction = 10
+        self.bn_size_reduction = 50
         self.criterion = nn.MSELoss()
         self.reg = args.regularizer
         self.batch_size = batch_size_train
@@ -169,16 +169,17 @@ class Trainer:
                             rec_loss.item(), val_loss,
                             block_reg.item(), do_rate))
 
-                if (batch_idx)%(total_batches/(self.bn_size_reduction)) == 0:
+                if (batch_idx)%int(total_batches/(self.bn_size_reduction)) == 0:
                     #print(((len(self.train_loader)*n_epochs)/self.batch_size)/(self.final_bn_size))
+                    blocks = compute_layer_blocks_out(self.model.encoder_output_layer, self.n_conn_comp)
                     re = self.neuron_wise_br(self.model.encoder_output_layer, blocks, test_examples)
                     removal_mask = torch.ones(self.model.encoder_output_layer.out_features, dtype=torch.bool)
-                    #removal_mask[np.argmin(re)] = 0
-                    print(re)
+                    #print(re)
+                    removal_mask[np.argmin(re)] = 0
                     self.model.encoder_output_layer.remove_neurons_out(removal_mask)
                     self.model.decoder_hidden_layer.remove_neurons_in(removal_mask)
-                    blocks = compute_layer_blocks_out(self.model.encoder_output_layer, self.n_conn_comp)
                     print("bn size:"+str(self.model.encoder_output_layer.out_features))
+                    self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
 
             loss = loss / len(self.train_loader)
             print("Train epoch {}, loss {}".format(e, loss))
