@@ -28,18 +28,30 @@ def block_dropout(input, blocks, p):
     return input*block_dropout_mask(blocks, p)
 
 def layer_svd(layer):
-    a_n = normalize_w(layer.weight)
+    masked_weight = layer.weight
+    if layer.in_mask is not None:
+        masked_weight = layer.weight[:, layer.in_mask]
+    if layer.out_mask is not None:
+        masked_weight = masked_weight[layer.out_mask]
+
+    a_n = normalize_w(masked_weight) #TODO: not sure if this works directly
     return torch.svd(a_n)
 
 def compute_layer_blocks_out(layer, ncc):
     #blocks are computer on the output because the weight matrix is transposed
     u, _, _ = layer_svd(layer)
-    return blocks_from_svd(u, ncc)
+    blocks = -torch.ones(layer.out_features, dtype=torch.int) #pruned neurons will have value of -1
+    masked_blocks = blocks_from_svd(u, ncc)
+    blocks[layer.out_mask] = torch.tensor(masked_blocks, dtype=torch.int)  #return blocking results back to unmasked shape
+    return blocks
 
 def compute_layer_blocks_in(layer, ncc):
     #blocks are computer on the input because the weight matrix is transposed
     _, _, v = layer_svd(layer)
-    return blocks_from_svd(v, ncc)
+    blocks = -torch.ones(layer.in_features, dtype=torch.int) #pruned neurons will have value of -1
+    masked_blocks = blocks_from_svd(v, ncc)
+    blocks[layer.in_mask] = torch.tensor(masked_blocks, dtype=torch.int) #return blocking results back to unmasked shape
+    return blocks
 
 def block_regularizer(layer, ncc):
     _, s, _ = layer_svd(layer)
@@ -82,6 +94,7 @@ class DisentangledLinear(nn.Linear):
         assert(len(mask) == self.weight.shape[1])
         self.weight = nn.Parameter(self.weight.clone().detach()[:, mask])
         self.in_features = mask.sum().item()
+        self.in_mask = self.in_mask[mask]
 
     def remove_neurons_out(self, mask):
         """ deletes neurons from input layer,
@@ -91,6 +104,7 @@ class DisentangledLinear(nn.Linear):
         self.weight = nn.Parameter(self.weight.clone().detach()[mask])
         self.bias = nn.Parameter(self.bias.clone().detach()[mask])
         self.out_features = mask.sum().item()
+        self.out_mask = self.out_mask[mask]
 
     def collapse_neurons_in(self, mask):
         """ collapses several neurons into one,
@@ -127,11 +141,11 @@ class DisentangledLinear(nn.Linear):
 
     def turn_input_neurons_off(self, mask):
         """ 0s in the mask indicate the neurons being turned off """
-        self.in_mask = torch.tensor(mask).to(device)
+        self.in_mask = torch.tensor(mask, requires_grad=False).to(device)
 
     def turn_output_neurons_off(self, mask):
         """ 0s in the mask indicate the neurons being turned off """
-        self.out_mask = torch.tensor(mask).to(device)
+        self.out_mask = torch.tensor(mask, requires_grad=False).to(device)
 
     def turn_all_input_neurons_on(self):
         self.in_mask = None
