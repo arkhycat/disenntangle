@@ -7,25 +7,23 @@ import torchvision
 from spectral_utils import normalize_w, blocks_from_svd
 from math import floor
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+#device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def block_dropout_mask(blocks, prob):
     #low prob -> low probability of turning off
-    mask = torch.zeros(len(blocks), dtype=torch.bool, device=device)
-    first_mask = torch.rand(((blocks==0).sum(), ), device=device) > prob
+    mask = torch.zeros(len(blocks), dtype=torch.bool)
+    first_mask = torch.rand(((blocks==0).sum(), )) > prob
     mask[blocks==0] = first_mask
     p = first_mask.sum()/len(first_mask)
     for i in range(1, max(blocks)+1):
-        new_mask = torch.zeros(((blocks==i).sum(), ), dtype=torch.bool, device=device)
+        new_mask = torch.zeros(((blocks==i).sum(), ), dtype=torch.bool)
         new_mask[:int(p*len(new_mask))] = 1
         mask[blocks==i] = new_mask[torch.randperm(len(new_mask))]
 
-    #full_mask = torch.rand((blocks.shape[0], ), device=device) > prob
-    #return full_mask.float()*ee_coeff + mask.float()*(1-ee_coeff)
     return mask.float()
 
 def block_dropout(input, blocks, p):
-    return input*block_dropout_mask(blocks, p)
+    return input*block_dropout_mask(blocks, p).to(input.get_device())
 
 def layer_svd(layer):
     masked_weight = layer.weight
@@ -141,11 +139,11 @@ class DisentangledLinear(nn.Linear):
 
     def turn_input_neurons_off(self, mask):
         """ 0s in the mask indicate the neurons being turned off """
-        self.in_mask = torch.tensor(mask, requires_grad=False).to(device)
+        self.in_mask = torch.tensor(mask, requires_grad=False).to(self.weight.get_device())
 
     def turn_output_neurons_off(self, mask):
         """ 0s in the mask indicate the neurons being turned off """
-        self.out_mask = torch.tensor(mask, requires_grad=False).to(device)
+        self.out_mask = torch.tensor(mask, requires_grad=False).to(self.weight.get_device())
 
     def turn_all_input_neurons_on(self):
         self.in_mask = None
@@ -197,6 +195,7 @@ class AE(nn.Module):
 
     def forward(self, x, blocks=None, do_rate=0.2, ee_coeff=1.0):
         if self.mask is not None:
+            device = self.encoder_output_layer.weight.get_device()
             self.encoder_output_layer.weight = nn.Parameter(self.encoder_output_layer.weight.to(device) * self.mask.to(device))
             self.decoder_hidden_layer.weight = nn.Parameter(self.decoder_hidden_layer.weight.to(device) * torch.transpose(self.mask, 1, 0).to(device))
 

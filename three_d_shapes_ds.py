@@ -2,13 +2,15 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 import h5py
+import os
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+#device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class ThreeDShapes(Dataset):
-    def __init__(self, transform = None, filtered = False):
+    def __init__(self, filename='3dshapes.h5', transform = None, filtered = False):
         super(Dataset, self).__init__()
-        self.dataset = h5py.File('3dshapes.h5', 'r')
+        assert(os.path.exists(filename))
+        self.dataset = h5py.File(filename, 'r')
         self.images = self.dataset['images']  # array shape [480000,64,64,3], uint8 in range(256)
         self.labels = self.dataset['labels']  # array shape [480000,6], float64
         if filtered:
@@ -46,11 +48,11 @@ class ThreeDShapes(Dataset):
         im = np.asarray(im)
         im = im / 255. # normalise values to range [0,1]
         im = im.astype(np.float32)
-        im = torch.tensor(np.transpose(im.reshape([64, 64, 3]), (2, 0, 1)), device=device)
+        im = torch.tensor(np.transpose(im.reshape([64, 64, 3]), (2, 0, 1)))
         labels = self.cache_labels[ind]
         if self.transform:
             im = self.transform(im)
-        return im.to(device), labels
+        return im, labels
 
     def update_cache(self):
         idxs = np.sort(np.random.choice(self.n_samples, self.cache_size, replace=False)).tolist()
