@@ -49,5 +49,5 @@ def show_reconstruction(test_examples, trainer):
 def get_test_sample(trainer):
     for batch_features in trainer.test_loader:
         batch_features = batch_features[0]
-        test_examples = batch_features.to(device)
+        test_examples = batch_features
         return test_examples

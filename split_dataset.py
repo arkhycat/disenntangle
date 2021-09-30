@@ -2,7 +2,6 @@ import torchvision
 import torch
 import random
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class SplitDS(torch.utils.data.Dataset):
     def __init__(self):
@@ -17,12 +16,12 @@ class SplitDS(torch.utils.data.Dataset):
         dclr, bclr = clrs[dclr_idx], clrs[bclr_idx]
 
         shape = [36, 36, 3]
-        img = torch.zeros(shape, device=device)
+        img = torch.zeros(shape)
         img[int(shape[0]/2):, :, :] = bclr
         img[:int(shape[0]/2), :, :] = dclr
 
-        return img.transpose(0, 2), (torch.tensor(dclr_idx, dtype=torch.long, device=device),
-                     torch.tensor(bclr_idx, dtype=torch.long, device=device))
+        return img.transpose(0, 2), (torch.tensor(dclr_idx, dtype=torch.long),
+                     torch.tensor(bclr_idx, dtype=torch.long))
 
     def __len__(self):
         return 10000

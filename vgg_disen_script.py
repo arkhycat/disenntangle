@@ -28,30 +28,33 @@ timestampStr = dateTimeObj.strftime("%d.%m.%Y(%H:%M:%S)")
 
 class SupportedDatasets(enum.Enum):
     THREEDSHAPES = 0,
-    COL_MNIST = 1
+    COL_MNIST = 1,
+    CIFAR10 = 2
 
 parser = argparse.ArgumentParser()
 
 # Common params
 parser.add_argument("--dataset", type=str, choices=[ds.name for ds in SupportedDatasets], help="", 
-                    default=SupportedDatasets.COL_MNIST.name)
+                    default=SupportedDatasets.THREEDSHAPES.name)
 parser.add_argument("--input_layer", type=str, help="Layer to disentangle", default='cl0')
 parser.add_argument("--output_layer", type=str, help="Layer to disentangle", default='cl3')
-parser.add_argument("--blocks", type=int, help="Number of blocks", default=2)
-parser.add_argument("--layer_size", type=int, help="Size of the disentangled layer", default=4096)
-parser.add_argument("--prune_by", type=int, help="How many neurons we want to remove", default=2048)
+parser.add_argument("--blocks", type=int, help="Number of blocks", default=4)
+parser.add_argument("--layer_size", type=int, help="Size of the disentangled layer", default=400)
+parser.add_argument("--prune_by", type=int, help="How many neurons we want to remove", default=200)
 parser.add_argument("--data_dir", type=str, help="Directory to load data from", default='data')
 parser.add_argument("--load_model", type=str, help="")
 parser.add_argument("--save_dir", type=str, help="Directory to save models, logs and plots to", 
                     default=os.path.join("outputs", timestampStr))
 parser.add_argument("--deterministic", type=bool, help="", default=False)
+parser.add_argument("--filtered", type=bool, help="", default=False)
 parser.add_argument("--gpus", type=str, help="", default=None)
-parser.add_argument("--batch_size", type=int, help="", default=8)
+parser.add_argument("--batch_size", type=int, help="", default=32)
 parser.add_argument("--n_epochs", type=int, help="", default=30)
-parser.add_argument("--dropout_p", type=float, help="Probability of block dropout", default=0.8)
+parser.add_argument("--dropout_p", type=float, help="Probability of block dropout", default=0.5)
 parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "Adam"], default="SGD")
+parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
-args = parser.parse_args(['--gpus', '2'])  # important to put '' in Jupyter otherwise it will complain
+args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
 
 config = dict()
 # Wrapping configuration into a dictionary
@@ -63,8 +66,6 @@ if not os.path.exists(config["save_dir"]):
     
 logging.basicConfig(filename=os.path.join(config["save_dir"], "run.log"), level=logging.DEBUG)
 
-config['data_dir'] = os.path.basename(config['data_dir'])  # handle absolute and relative paths
-config['save_dir'] = os.path.basename(config['save_dir'])
 print("Saving and logging to {}".format(config['save_dir']))
 
 if config['deterministic']:
@@ -90,7 +91,7 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                                        transform=torchvision.transforms.Compose([
                                                            torchvision.transforms.ToPILImage(), 
                                                            torchvision.transforms.Resize((32, 32)),
-                                                           torchvision.transforms.ToTensor()]), filtered = True),
+                                                           torchvision.transforms.ToTensor()]), filtered = config["filtered"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
     testloader = torch.utils.data.DataLoader(
@@ -98,13 +99,43 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                                        transform=torchvision.transforms.Compose([
                                                            torchvision.transforms.ToPILImage(), 
                                                            torchvision.transforms.Resize((32, 32)),
-                                                           torchvision.transforms.ToTensor()]), filtered = True),
+                                                           torchvision.transforms.ToTensor()]), filtered = config["filtered"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
-    n_classes = 16
-    def target_vec_to_class(vec):
-        labels = (vec[:, 0] == 0).int()*(2**3) + (vec[:, 1] == 0).int()*(2**2) + (vec[:, 2] == 0)*2 + (vec[:, 4] == 0)
-        return labels.long()
+    if config["filtered"]:
+        n_classes = 16
+        def target_vec_to_class(vec):
+            labels = (vec[:, 0] == 0).int()*(2**3) + (vec[:, 1] == 0).int()*(2**2) + (vec[:, 2] == 0)*2 + (vec[:, 4] == 0)
+            return labels.long()
+    else:
+        n_classes = 8
+        def target_vec_to_class(vec):
+            labels = torch.zeros((vec.shape[0]))
+            for i, v in enumerate(vec):
+                if v[1] > 0.5: #object hue
+                    if v[0] > 0.7: #floor hue
+                        if v[5] > 0: #orientation
+                            labels[i] = 7
+                        else: #orientation
+                            labels[i] = 6
+                    else: #floor hue
+                        if v[4] > 1: #shape
+                            labels[i] = 5
+                        else: #shape
+                            labels[i] = 4
+                else: #object hue
+                    if v[1] > 0.5: #wall hue
+                        if v[3] > 0.5: #scale
+                            labels[i] = 3
+                        else: #scale
+                            labels[i] = 2
+                    else:
+                        if v[3] > 1: #shape
+                            labels[i] = 1
+                        else: #shape
+                            labels[i] = 0                       
+
+            return labels.long()
     
 elif config["dataset"] == SupportedDatasets.COL_MNIST.name:
     trainloader = torch.utils.data.DataLoader(
@@ -120,12 +151,28 @@ elif config["dataset"] == SupportedDatasets.COL_MNIST.name:
                                    torchvision.transforms.ToTensor()
                                  ])),
       batch_size=config["batch_size"], shuffle=True)
-    
     n_classes = 30
     def target_vec_to_class(tpl):
         (target, dclr_idx, bclr_idx) = tpl
         target += bclr_idx*10
         return target.long()
+
+elif config["dataset"] == SupportedDatasets.CIFAR10.name:
+    transform = transforms.Compose(
+        [transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    trainset = torchvision.datasets.CIFAR10(root=config["data_dir"], train=True,
+                                            download=True, transform=transform)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=config["batch_size"],
+                                            shuffle=True)
+    testset = torchvision.datasets.CIFAR10(root=config["data_dir"], train=False,
+                                        download=True, transform=transform)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=config["batch_size"],
+                                            shuffle=False)
+    n_classes = 10
+    def target_vec_to_class(x):
+        return x
 
 else:
     logging.error("Dataset not supported")
@@ -239,21 +286,26 @@ def fit(model, train_dataloader, prune_every_n_steps):
         #target = target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        block_reg = block_regularizer(model.module.classifier[3], ncc)
-        loss = criterion(output.cpu(), target)# + block_reg
+        if config["input_layer"]=="cl3":
+            block_reg = block_regularizer(model.module.classifier[3], ncc)
+        if config["input_layer"]=="cl0":
+            block_reg = block_regularizer(model.module.classifier[0], ncc)
+        loss = criterion(output.cpu(), target) + config["br_coef"]*block_reg
         #loss = block_reg
         train_running_loss += loss.item()
         _, preds = torch.max(output.data, 1)
         train_running_correct += (preds.cpu() == target).sum().item()
         loss.backward()
         optimizer.step()
-        if (i)%prune_every_n_steps == 0:
+        if (i+1)%prune_every_n_steps == 0:
             logging.info("Block regularizer "+str(block_reg.item()))
             #plot_blocked_weights(vgg16.classifier[6])
             #plot_blocked_weights(vgg16.classifier[3])
-            if config["input_layer"]=="cl3" and config["output_layer"]=="cl6":
+            if config["input_layer"]=="cl3" and config["output_layer"]=="cl6" and \
+                    (model.module.classifier[3].out_mask is None or model.module.classifier[3].out_mask.sum()>model.module.classifier[3].out_features-config["prune_by"]):
                 prune(model.module, model.module.classifier[6], model.module.classifier[3], ncc)
-            if config["input_layer"]=="cl0" and config["output_layer"]=="cl3":
+            if config["input_layer"]=="cl0" and config["output_layer"]=="cl3" and \
+                    (model.module.classifier[0].out_mask is None or model.module.classifier[0].out_mask.sum()>model.module.classifier[0].out_features-config["prune_by"]):
                 prune(model.module, model.module.classifier[3], model.module.classifier[0], ncc)
             
     train_loss = train_running_loss/len(train_dataloader.dataset)
@@ -267,7 +319,7 @@ total_batches = len(trainloader)*n_epochs
 layer_size_reduction = config["prune_by"]
 prune_every_n_steps = int(round(total_batches/(layer_size_reduction)))
 
-vgg16_parallel = nn.DataParallel(vgg16, device_ids = [0,1])
+vgg16_parallel = nn.DataParallel(vgg16, device_ids = [0])
 
 train_loss , train_accuracy = [], []
 val_loss , val_accuracy, br = [], [], []
@@ -285,7 +337,30 @@ for epoch in range(n_epochs):
     val_accuracy.append(val_epoch_accuracy)
     torch.save(vgg16_parallel.module, os.path.join(config["save_dir"], "model.pt"))
     end_e = time.time()
-    logging.info('Epoch {} took {} minutes '.format(epoch+1, (end-start)/60))
+    logging.info('Epoch {} took {} minutes '.format(epoch+1, (end_e-start_e)/60))
     
 end = time.time()
 logging.info('{} minutes in total'.format((end-start)/60))
+
+plt.figure(figsize=(10, 7))
+plt.plot(train_accuracy, color='green', label='train accuracy')
+plt.plot(val_accuracy, color='blue', label='validataion accuracy')
+plt.legend()
+plt.savefig(os.path.join(config["save_dir"], 'accuracy.png'))
+plt.show()
+
+plt.figure(figsize=(10, 7))
+plt.plot(br, color='red', label='block regularizer')
+plt.legend()
+plt.savefig(os.path.join(config["save_dir"], 'br.png'))
+plt.show()
+
+plt.figure(figsize=(10, 7))
+plt.plot(train_loss, color='orange', label='train loss')
+plt.plot(val_loss, color='red', label='validataion loss')
+plt.legend()
+plt.savefig(os.path.join(config["save_dir"], 'loss.png'))
+plt.show()
+
+with open(os.path.join(config["save_dir"], 'config.json'), 'w') as f:
+    json.dump(config, f)
