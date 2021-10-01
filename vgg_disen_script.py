@@ -45,8 +45,9 @@ parser.add_argument("--data_dir", type=str, help="Directory to load data from", 
 parser.add_argument("--load_model", type=str, help="")
 parser.add_argument("--save_dir", type=str, help="Directory to save models, logs and plots to", 
                     default=os.path.join("outputs", timestampStr))
-parser.add_argument("--deterministic", type=bool, help="", default=False)
-parser.add_argument("--filtered", type=bool, help="", default=False)
+parser.add_argument("--deterministic", dest="deterministic", action="store_true")
+parser.add_argument("--filtered", help="Filter 3dshapes dataset (otherwise the decision tree labels are used)",
+                     dest="filtered", action="store_true")
 parser.add_argument("--gpus", type=str, help="", default=None)
 parser.add_argument("--batch_size", type=int, help="", default=32)
 parser.add_argument("--n_epochs", type=int, help="", default=30)
@@ -55,6 +56,7 @@ parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "
 parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
 args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
+parser.set_defaults(filtered=False, deterministic=False)
 
 config = dict()
 # Wrapping configuration into a dictionary
@@ -109,31 +111,36 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
             return labels.long()
     else:
         n_classes = 8
+
+        # 0: floor_hue, 1: wall_hue, 2: object_hue, 3: scale, 4: shape, 5: orientation
+        #warmer colors: cyan, green, yellow, orange, red
+        #cooler colors: magenta, violet, blue
+
         def target_vec_to_class(vec):
             labels = torch.zeros((vec.shape[0]))
             for i, v in enumerate(vec):
-                if v[1] > 0.5: #object hue
-                    if v[0] > 0.7: #floor hue
+                if v[2] > 0.5: #object hue
+                    if v[0] > 0.5: #floor hue
                         if v[5] > 0: #orientation
-                            labels[i] = 7
+                            labels[i] = 7 #object of cooler color, cooler floor, orientation?
                         else: #orientation
-                            labels[i] = 6
+                            labels[i] = 6 #object of cooler color, cooler floor, orientation?
                     else: #floor hue
-                        if v[4] > 1: #shape
-                            labels[i] = 5
+                        if v[4] > 1: #shape 
+                            labels[i] = 5 #object of cooler color, warmer floor, pill or sphere
                         else: #shape
-                            labels[i] = 4
+                            labels[i] = 4 #object of cooler color, warmer floor, cylinder or cube
                 else: #object hue
                     if v[1] > 0.5: #wall hue
-                        if v[3] > 0.5: #scale
-                            labels[i] = 3
+                        if v[3] > 1: #scale
+                            labels[i] = 3 #object of warmer color, cooler walls, bigger scale
                         else: #scale
-                            labels[i] = 2
+                            labels[i] = 2 #object of warmer color, cooler walls, smaller scale
                     else:
-                        if v[3] > 1: #shape
-                            labels[i] = 1
+                        if v[4] > 2: #shape
+                            labels[i] = 1 #object of warmer color, warmer walls, pill
                         else: #shape
-                            labels[i] = 0                       
+                            labels[i] = 0 #object of warmer color, warmer walls, sphere, cylinder or cube                   
 
             return labels.long()
     
