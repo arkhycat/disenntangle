@@ -22,6 +22,7 @@ from spectral_utils import normalize_w
 from three_d_shapes_ds import ThreeDShapes
 from col_mnist import ColMNIST
 from models import DisentangledLinear, BlockDropout
+from vgg_s import VGG
 
 dateTimeObj = datetime.now()
 timestampStr = dateTimeObj.strftime("%d.%m.%Y(%H:%M:%S)")
@@ -92,7 +93,7 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                           ThreeDShapes(filename=os.path.join(config["data_dir"], "3dshapes.h5"),
                                                        transform=torchvision.transforms.Compose([
                                                            torchvision.transforms.ToPILImage(), 
-                                                           torchvision.transforms.Resize((512, 512)),
+                                                           torchvision.transforms.Resize((32, 32)),
                                                            torchvision.transforms.ToTensor()]), filtered = config["filtered"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
@@ -100,7 +101,7 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                           ThreeDShapes(filename=os.path.join(config["data_dir"], "3dshapes.h5"),
                                                        transform=torchvision.transforms.Compose([
                                                            torchvision.transforms.ToPILImage(), 
-                                                           torchvision.transforms.Resize((512, 512)),
+                                                           torchvision.transforms.Resize((32, 32)),
                                                            torchvision.transforms.ToTensor()]), filtered = config["filtered"]),
                                           batch_size=config["batch_size"], shuffle=True)
 

@@ -48,7 +48,7 @@ class ThreeDShapes(Dataset):
         im = np.asarray(im)
         im = im / 255. # normalise values to range [0,1]
         im = im.astype(np.float32)
-        im = torch.tensor(np.transpose(im.reshape([64, 64, 3]), (2, 0, 1)))
+        im = torch.tensor(np.transpose(im.reshape([64, 64, 3]), (2, 0, 1)), dtype=torch.float)
         labels = self.cache_labels[ind]
         if self.transform:
             im = self.transform(im)
