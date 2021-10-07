@@ -45,18 +45,17 @@ class VGG(nn.Module):
                 filters = spec
 
         self.layers = nn.Sequential(*layer_list)        
-
-        self.fc = nn.Linear(512, num_classes)
-        if dense_classifier:
-            self.fc = nn.Linear(512, num_classes)
+        self.ap = nn.AvgPool2d(2)
+        self.classifier = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Dropout(), \
+            nn.Linear(512, 512), nn.ReLU(), nn.Dropout(), nn.Linear(512, num_classes))
 
         self._initialize_weights()
 
     def forward(self, x):
         x = self.layers(x)
-        x = nn.AvgPool2d(2)(x)
+        x = self.ap(x)
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        x = self.classifier(x)
         return x
 
     def _initialize_weights(self):
@@ -92,34 +91,34 @@ def _vgg(arch, plan, conv, num_classes, dense_classifier, pretrained):
         model.load_state_dict(model_dict)
     return model
 
-def vgg11(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg11(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(11)
     return _vgg('vgg11_bn', plan, ConvModule, num_classes, dense_classifier, pretrained)
 
-def vgg11_bn(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg11_bn(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(11)
     return _vgg('vgg11_bn', plan, ConvBNModule, num_classes, dense_classifier, pretrained)
 
-def vgg13(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg13(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(13)
     return _vgg('vgg13_bn', plan, ConvModule, num_classes, dense_classifier, pretrained)
 
-def vgg13_bn(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg13_bn(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(13)
     return _vgg('vgg13_bn', plan, ConvBNModule, num_classes, dense_classifier, pretrained)
 
-def vgg16(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg16(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(16)
     return _vgg('vgg16_bn', plan, ConvModule, num_classes, dense_classifier, pretrained)
 
-def vgg16_bn(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg16_bn(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(16)
     return _vgg('vgg16_bn', plan, ConvBNModule, num_classes, dense_classifier, pretrained)
 
-def vgg19(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg19(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(19)
     return _vgg('vgg19_bn', plan, ConvModule, num_classes, dense_classifier, pretrained)
 
-def vgg19_bn(input_shape, num_classes, dense_classifier=False, pretrained=False):
+def vgg19_bn(num_classes, dense_classifier=False, pretrained=False):
     plan = _plan(19)
     return _vgg('vgg19_bn', plan, ConvBNModule, num_classes, dense_classifier, pretrained)

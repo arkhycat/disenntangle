@@ -3,8 +3,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.nn as nn
 import torchvision
-import torchvision.transforms as transforms
 from torchvision import models
+import torchvision.transforms as transforms
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -22,6 +22,7 @@ from spectral_utils import normalize_w
 from three_d_shapes_ds import ThreeDShapes
 from col_mnist import ColMNIST
 from models import DisentangledLinear, BlockDropout
+import homebrew_vgg
 
 dateTimeObj = datetime.now()
 timestampStr = dateTimeObj.strftime("%d.%m.%Y(%H:%M:%S)")
@@ -46,17 +47,20 @@ parser.add_argument("--load_model", type=str, help="")
 parser.add_argument("--save_dir", type=str, help="Directory to save models, logs and plots to", 
                     default=os.path.join("outputs", timestampStr))
 parser.add_argument("--deterministic", dest="deterministic", action="store_true")
+parser.add_argument("--no_dt_labels", dest="dt_labels", action="store_false")
+parser.add_argument("--homebrew_model", dest="homebrew_model", action="store_true")
 parser.add_argument("--filtered", help="Filter 3dshapes dataset (otherwise the decision tree labels are used)",
                      dest="filtered", action="store_true")
 parser.add_argument("--gpus", type=str, help="", default=None)
 parser.add_argument("--batch_size", type=int, help="", default=32)
 parser.add_argument("--n_epochs", type=int, help="", default=30)
+parser.add_argument("--img_size", type=int, help="", default=32)
 parser.add_argument("--dropout_p", type=float, help="Probability of block dropout", default=0.5)
 parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "Adam"], default="SGD")
 parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
 args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
-parser.set_defaults(filtered=False, deterministic=False)
+parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False)
 
 config = dict()
 # Wrapping configuration into a dictionary
@@ -92,70 +96,47 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                           ThreeDShapes(filename=os.path.join(config["data_dir"], "3dshapes.h5"),
                                                        transform=torchvision.transforms.Compose([
                                                            torchvision.transforms.ToPILImage(), 
-                                                           torchvision.transforms.Resize((512, 512)),
-                                                           torchvision.transforms.ToTensor()]), filtered = config["filtered"]),
+                                                           torchvision.transforms.Resize((config["img_size"], config["img_size"])),
+                                                           torchvision.transforms.ToTensor()]), 
+                                                           filtered = config["filtered"],
+                                                           dt_labels=config["dt_labels"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
     testloader = torch.utils.data.DataLoader(
                                           ThreeDShapes(filename=os.path.join(config["data_dir"], "3dshapes.h5"),
                                                        transform=torchvision.transforms.Compose([
                                                            torchvision.transforms.ToPILImage(), 
-                                                           torchvision.transforms.Resize((512, 512)),
-                                                           torchvision.transforms.ToTensor()]), filtered = config["filtered"]),
+                                                           torchvision.transforms.Resize((config["img_size"], config["img_size"])),
+                                                           torchvision.transforms.ToTensor()]), 
+                                                           filtered = config["filtered"],
+                                                           dt_labels=config["dt_labels"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
     if config["filtered"]:
+        assert((not config["dt_labels"]))
         n_classes = 16
         def target_vec_to_class(vec):
             labels = (vec[:, 0] == 0).int()*(2**3) + (vec[:, 1] == 0).int()*(2**2) + (vec[:, 2] == 0)*2 + (vec[:, 4] == 0)
             return labels.long()
-    else:
+    else: #decision tree labels
+        assert(config["dt_labels"])
         n_classes = 8
-
-        # 0: floor_hue, 1: wall_hue, 2: object_hue, 3: scale, 4: shape, 5: orientation
-        #warmer colors: cyan, green, yellow, orange, red
-        #cooler colors: magenta, violet, blue
-
-        def target_vec_to_class(vec):
-            labels = torch.zeros((vec.shape[0]))
-            for i, v in enumerate(vec):
-                if v[2] > 0.5: #object hue
-                    if v[0] > 0.5: #floor hue
-                        if v[5] > 0: #orientation
-                            labels[i] = 7 #object of cooler color, cooler floor, orientation?
-                        else: #orientation
-                            labels[i] = 6 #object of cooler color, cooler floor, orientation?
-                    else: #floor hue
-                        if v[4] > 1: #shape 
-                            labels[i] = 5 #object of cooler color, warmer floor, pill or sphere
-                        else: #shape
-                            labels[i] = 4 #object of cooler color, warmer floor, cylinder or cube
-                else: #object hue
-                    if v[1] > 0.5: #wall hue
-                        if v[3] > 1: #scale
-                            labels[i] = 3 #object of warmer color, cooler walls, bigger scale
-                        else: #scale
-                            labels[i] = 2 #object of warmer color, cooler walls, smaller scale
-                    else:
-                        if v[4] > 2: #shape
-                            labels[i] = 1 #object of warmer color, warmer walls, pill
-                        else: #shape
-                            labels[i] = 0 #object of warmer color, warmer walls, sphere, cylinder or cube                   
-
+        def target_vec_to_class(tpl):
+            latents, labels = tpl      
             return labels.long()
     
 elif config["dataset"] == SupportedDatasets.COL_MNIST.name:
     trainloader = torch.utils.data.DataLoader(
       ColMNIST(os.path.join(config["data_dir"], "mnist"), train=True, download=True,
                                  transform=torchvision.transforms.Compose([
-                                   torchvision.transforms.ToTensor(),
+                                   torchvision.transforms.ToTensor(), torchvision.transforms.Resize((config["img_size"], config["img_size"])
                                  ])),
       batch_size=config["batch_size"], shuffle=True)
 
     testloader = torch.utils.data.DataLoader(
       ColMNIST(os.path.join(config["data_dir"], "mnist"), train=False, download=True,
                                  transform=torchvision.transforms.Compose([
-                                   torchvision.transforms.ToTensor()
+                                   torchvision.transforms.ToTensor(), torchvision.transforms.Resize((config["img_size"], config["img_size"])
                                  ])),
       batch_size=config["batch_size"], shuffle=True)
     n_classes = 30
@@ -166,7 +147,7 @@ elif config["dataset"] == SupportedDatasets.COL_MNIST.name:
 
 elif config["dataset"] == SupportedDatasets.CIFAR10.name:
     transform = transforms.Compose(
-        [transforms.Resize((224, 224)),
+        [transforms.Resize((config["img_size"], config["img_size"])),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     trainset = torchvision.datasets.CIFAR10(root=config["data_dir"], train=True,
@@ -191,7 +172,11 @@ img_shape = data.shape[1:]
 if config["load_model"] is not None:
     vgg16 = torch.load(config["load_model"])
 else:
-    vgg16 = models.vgg16(pretrained=True)
+    if config["homebrew_model"]:
+        logging.error("Homebrew models are not pretrained")
+        vgg16 = homebrew_vgg.vgg16(num_classes=n_classes, pretrained=False)
+    else:
+        vgg16 = models.vgg16(pretrained=True)
 vgg16.to(device)
 
 ncc = config["blocks"] #number of connected components
@@ -208,7 +193,7 @@ elif config["input_layer"]=="cl0" and config["output_layer"]=="cl3":
 else:
     logging.error("Layer combination not supported")
 
-for param in vgg16.features.parameters():
+for param in vgg16.parameters():
     param.requires_grad = True
     
 logging.info(vgg16)
