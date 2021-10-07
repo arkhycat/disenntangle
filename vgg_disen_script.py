@@ -129,14 +129,14 @@ elif config["dataset"] == SupportedDatasets.COL_MNIST.name:
     trainloader = torch.utils.data.DataLoader(
       ColMNIST(os.path.join(config["data_dir"], "mnist"), train=True, download=True,
                                  transform=torchvision.transforms.Compose([
-                                   torchvision.transforms.ToTensor(), torchvision.transforms.Resize((config["img_size"], config["img_size"])
+                                   torchvision.transforms.ToTensor(), torchvision.transforms.Resize((config["img_size"], config["img_size"]))
                                  ])),
       batch_size=config["batch_size"], shuffle=True)
 
     testloader = torch.utils.data.DataLoader(
       ColMNIST(os.path.join(config["data_dir"], "mnist"), train=False, download=True,
                                  transform=torchvision.transforms.Compose([
-                                   torchvision.transforms.ToTensor(), torchvision.transforms.Resize((config["img_size"], config["img_size"])
+                                   torchvision.transforms.ToTensor(), torchvision.transforms.Resize((config["img_size"], config["img_size"]))
                                  ])),
       batch_size=config["batch_size"], shuffle=True)
     n_classes = 30
