@@ -153,9 +153,9 @@ class DisentangledLinear(nn.Linear):
 
     def forward(self, input):
         if self.in_mask is not None:
-            input = self.in_mask*input
+            input = self.in_mask.to(input.get_device())*input
         if self.out_mask is not None:
-            return self.out_mask * super().forward(input)
+            return self.out_mask.to(input.get_device()) * super().forward(input)
         else:
             return super().forward(input)
 
