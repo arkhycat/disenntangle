@@ -84,9 +84,10 @@ if config['deterministic']:
 
 device = "cpu"
 if len(config["gpus"]) > 0:
-    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"]=",".join(config["gpus"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #change to actual args
+    #os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+    #os.environ["CUDA_VISIBLE_DEVICES"]=config["gpus"]
+    gpus = [int(d) for d in config["gpus"].split(',')]
+    device = torch.device("cuda:{}".format(gpus[0]) if torch.cuda.is_available() else "cpu") #change to actual args
     
 logging.info("Config {}".format(json.dumps(config, indent=4)))
 logging.info("Using {}".format(device))
@@ -173,7 +174,7 @@ if config["load_model"] is not None:
     vgg16 = torch.load(config["load_model"])
 else:
     if config["homebrew_model"]:
-        logging.error("Homebrew models are not pretrained")
+        logging.info("Homebrew models are not pretrained")
         vgg16 = homebrew_vgg.vgg16(num_classes=n_classes, pretrained=False)
     else:
         vgg16 = models.vgg16(pretrained=True)
@@ -190,6 +191,7 @@ elif config["input_layer"]=="cl0" and config["output_layer"]=="cl3":
     vgg16.classifier[0] = DisentangledLinear(vgg16.classifier[0].in_features, config["layer_size"]).to(device)
     vgg16.classifier[3] = DisentangledLinear(config["layer_size"], vgg16.classifier[3].out_features).to(device)
     vgg16.classifier[2] = BlockDropout(vgg16.classifier[3], ncc=ncc, p=config["dropout_p"], apply_to="in")
+    vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
 else:
     logging.error("Layer combination not supported")
 
@@ -214,9 +216,9 @@ def validate(model, test_dataloader):
         data, target = data[0], data[1]
         target = target_vec_to_class(target)
         
-        data = data.to(device)
-        target = target.to(device)
-        output = model(data)
+        #data = data.to(device)
+        #target = target.to(device)
+        output = model(data).cpu()
         loss = criterion(output, target)
         
         val_running_loss += loss.item()
@@ -255,7 +257,7 @@ def prune(model, layer_out, layer_in, ncc):
     blocks = compute_layer_blocks_in(layer_out, ncc)
     for batch_features in testloader:
         batch_features = batch_features[0]
-        test_examples = batch_features.to(device)
+        test_examples = batch_features #.to(device)
         break
     re = neuron_wise_br(model, layer_in, blocks, test_examples, ncc)
     removal_mask = layer_in.out_mask
@@ -289,7 +291,7 @@ def fit(model, train_dataloader, prune_every_n_steps):
         train_running_correct += (preds.cpu() == target).sum().item()
         loss.backward()
         optimizer.step()
-        if (i+1)%prune_every_n_steps == 0:
+        if (i)%prune_every_n_steps == 0:
             logging.info("Block regularizer "+str(block_reg.item()))
             #plot_blocked_weights(vgg16.classifier[6])
             #plot_blocked_weights(vgg16.classifier[3])
@@ -311,7 +313,7 @@ total_batches = len(trainloader)*n_epochs
 layer_size_reduction = config["prune_by"]
 prune_every_n_steps = int(round(total_batches/(layer_size_reduction)))
 
-vgg16_parallel = nn.DataParallel(vgg16, device_ids = [0])
+vgg16_parallel = nn.DataParallel(vgg16, device_ids = gpus) #TODO: no option to just have cpu
 
 train_loss , train_accuracy = [], []
 val_loss , val_accuracy, br = [], [], []
