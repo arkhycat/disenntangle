@@ -49,6 +49,7 @@ parser.add_argument("--save_dir", type=str, help="Directory to save models, logs
 parser.add_argument("--deterministic", dest="deterministic", action="store_true")
 parser.add_argument("--no_dt_labels", dest="dt_labels", action="store_false")
 parser.add_argument("--homebrew_model", dest="homebrew_model", action="store_true")
+parser.add_argument("--not_pretrained", dest="pretrained", action="store_false")
 parser.add_argument("--filtered", help="Filter 3dshapes dataset (otherwise the decision tree labels are used)",
                      dest="filtered", action="store_true")
 parser.add_argument("--gpus", type=str, help="", default=None)
@@ -60,7 +61,7 @@ parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "
 parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
 args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
-parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False)
+parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False, pretrained=True)
 
 config = dict()
 # Wrapping configuration into a dictionary
@@ -177,7 +178,7 @@ else:
         logging.info("Homebrew models are not pretrained")
         vgg16 = homebrew_vgg.vgg16(num_classes=n_classes, pretrained=False)
     else:
-        vgg16 = models.vgg16(pretrained=True)
+        vgg16 = models.vgg16(pretrained=config["pretrained"])
 vgg16.to(device)
 
 ncc = config["blocks"] #number of connected components
