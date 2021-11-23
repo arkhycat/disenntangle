@@ -77,7 +77,7 @@ class BlockDropout(nn.Dropout):
 
             #print(blocks.shape)
             return block_dropout(input, blocks, do_rate)
-        return input
+        return F.dropout(input, p=do_rate)
 
 class DisentangledLinear(nn.Linear):
     def __init__(self, in_features, out_features):
@@ -161,7 +161,7 @@ class DisentangledLinear(nn.Linear):
 
 
 class AE(nn.Module):
-    def __init__(self, input_shape, bottleneck_size=10, hidden_size=128, ncc=1):
+    def __init__(self, input_shape, bottleneck_size=10, hidden_size=1024, ncc=1):
         super().__init__()
 
         self.input_shape = input_shape
@@ -199,7 +199,6 @@ class AE(nn.Module):
             self.encoder_output_layer.weight = nn.Parameter(self.encoder_output_layer.weight.to(device) * self.mask.to(device))
             self.decoder_hidden_layer.weight = nn.Parameter(self.decoder_hidden_layer.weight.to(device) * torch.transpose(self.mask, 1, 0).to(device))
 
-        #print(x.shape)
         self.layer_0_out = self.encoder_0(x)
         x = self.encoder_1(self.layer_0_out)
         #print(x.shape)
@@ -217,6 +216,63 @@ class AE(nn.Module):
         #x = self.block_dropout_2(F.tanh(self.decoder_hidden_layer(x)), do_rate)
         x = F.tanh(self.decoder_hidden_layer(x))
         x = F.dropout(F.tanh(self.decoder_output_layer(x)), p=0.2)
+        #print(x.shape)
+        x = x.view(-1, *self.enc_shape)
+        #print(x.shape)
+        x = self.decoder(x)
+        #print(x.shape)
+
+        return x
+
+
+class AE_baseline(nn.Module):
+    def __init__(self, input_shape, bottleneck_size=10, hidden_size=1024, ncc=1):
+        super().__init__()
+
+        self.input_shape = input_shape
+        self.hidden_size = hidden_size
+        self.bottleneck_size = bottleneck_size
+        self.encoder_0 = nn.Conv2d(input_shape[0], 6, kernel_size=5)
+        self.encoder_1 = nn.Sequential(
+            nn.ReLU(True),
+            nn.Conv2d(6,16,kernel_size=5),
+            nn.ReLU(True))
+
+        self.enc_shape = (16, floor((self.input_shape[-2]-4*2)), floor((self.input_shape[-1]-4*2)))
+        self.enc_size = int(np.prod(self.enc_shape))
+        #print(self.enc_size, self.enc_shape)
+        self.encoder_hidden_layer = nn.Linear(in_features=self.enc_size, out_features=self.hidden_size)
+        self.encoder_output_layer = DisentangledLinear(in_features=self.hidden_size, out_features=bottleneck_size)
+        self.decoder_hidden_layer = DisentangledLinear(in_features=bottleneck_size, out_features=self.hidden_size)
+        #self.encoder_output_layer = nn.Linear(in_features=self.hidden_size, out_features=bottleneck_size)
+        #self.decoder_hidden_layer = nn.Linear(in_features=bottleneck_size, out_features=self.hidden_size)
+        self.decoder_output_layer = nn.Linear(in_features=self.hidden_size, out_features=self.enc_size)
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(16,6,kernel_size=5),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(6,input_shape[0],kernel_size=5),
+            nn.ReLU(True))
+
+
+    def forward(self, x, blocks=None, do_rate=0.2, ee_coeff=1.0):
+        self.layer_0_out = self.encoder_0(x)
+        x = self.encoder_1(self.layer_0_out)
+        #print(x.shape)
+        x = x.view(-1, self.enc_size)
+        #print(x.shape)
+        x = F.dropout(F.tanh(self.encoder_hidden_layer(x)), p=0.2)
+        #x = F.tanh(self.encoder_hidden_layer(x))
+        self.embedding = F.tanh(self.encoder_output_layer(x))
+        #x = F.dropout(self.embedding)
+        x = self.embedding
+        #if blocks is not None and self.training:
+        x = F.dropout(x, p=0.5)
+
+        #print(x.shape)
+        #x = self.block_dropout_2(F.tanh(self.decoder_hidden_layer(x)), do_rate)
+        x = F.dropout(F.tanh(self.decoder_hidden_layer(x)), p=0.5)
+        x = F.dropout(F.tanh(self.decoder_output_layer(x)), p=do_rate)
         #print(x.shape)
         x = x.view(-1, *self.enc_shape)
         #print(x.shape)

@@ -1,7 +1,7 @@
 from col_mnist import ColMNIST
 from split_dataset import SplitDS
 from three_d_shapes_ds import ThreeDShapes
-from disentangling_vae.utils.datasets import DSprites
+# from disentangling_vae.utils.datasets import DSprites
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,12 +9,13 @@ import torch.optim as optim
 import numpy as np
 import torchvision
 from spectral_utils import *
-from models import AE, block_regularizer, compute_layer_blocks_out
+from models import AE, block_regularizer, compute_layer_blocks_out, compute_layer_blocks_in
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def clamp(x, minval=0, maxval=1):
     return max(min(x, maxval), minval)
+
 
 class Trainer:
     def __init__(self, args, batch_size_train = 32, batch_size_test= 32, dataset='colmnist'):
@@ -62,7 +63,7 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
         self.n_conn_comp = args.connected_components
         self.bn_size = args.bn_size
-        self.bn_size_reduction = 50
+        self.bn_size_reduction = 100
         self.criterion = nn.MSELoss()
         self.reg = args.regularizer
         self.batch_size = batch_size_train
@@ -75,7 +76,7 @@ class Trainer:
             mask[blocks==c] = 1
             layer.turn_output_neurons_off(mask)
             with torch.no_grad():
-                reconstruction = trainer.model(examples)
+                reconstruction = self.model(examples)
             block_error = trainer.criterion(examples, reconstruction).item()
             layer.turn_all_output_neurons_on()
 
@@ -95,30 +96,36 @@ class Trainer:
                 layer.turn_all_output_neurons_on()
         return relative_error
 
-
-    def neuron_wise_error(self, layer, blocks, examples):
+    def neuron_wise_br(self, layer, blocks, examples, ncc):
         self.model.eval()
-        relative_error = [None]*layer.out_features
+        br_wo_neuron = [np.inf]*layer.out_features
         for n in range(layer.out_features):
-            mask = torch.ones(layer.out_features, dtype=torch.float)
-            mask[n] = 0
-            layer.turn_output_neurons_off(mask)
-            with torch.no_grad():
-                reconstruction = trainer.model(examples)
-            relative_error[n] = self.criterion(examples, reconstruction).item()
-            layer.turn_all_output_neurons_on()
-        return relative_error
+            if layer.out_mask is not None:
+                mask = torch.clone(layer.out_mask)
+            else:
+                mask = torch.ones(layer.out_features, dtype=torch.bool)
+            if mask[n] > 0:
+                mask[n] = 0
+                a_n = normalize_w(layer.weight[mask])
+                _, s, _ = torch.svd(a_n)
+                br_wo_neuron[n] = ncc - torch.sum(s[:ncc]).detach().cpu()
+        return br_wo_neuron
 
-    def neuron_wise_br(self, layer, blocks, examples):
-        self.model.eval()
-        relative_error = [None]*layer.out_features
-        for n in range(layer.out_features):
-            mask = torch.ones(layer.out_features, dtype=torch.bool, device=device)
-            mask[n] = 0
-            a_n = normalize_w(self.model.encoder_output_layer.weight[mask])
-            _, s, _ = torch.svd(a_n)
-            relative_error[n] = self.n_conn_comp - torch.sum(s[:self.n_conn_comp]).detach().cpu()
-        return relative_error
+
+    def prune(self, layer_out, layer_in, ncc):
+        blocks = compute_layer_blocks_in(layer_out, ncc)
+        for batch_features in self.test_loader:
+            batch_features = batch_features[0]
+            test_examples = batch_features #.to(device)
+            break
+        re = self.neuron_wise_br(layer_in, blocks, test_examples, ncc)
+        removal_mask = layer_in.out_mask
+        if removal_mask is None:
+            removal_mask = torch.ones(layer_in.out_features, dtype=torch.bool)
+        removal_mask[np.argmin(re)] = 0
+        layer_out.turn_input_neurons_off(removal_mask)
+        layer_in.turn_output_neurons_off(removal_mask)
+        print("Pruned to {} neurons".format(layer_out.in_mask.sum().item()))
 
     def train(self, n_epochs):
         blocks = None
@@ -148,7 +155,7 @@ class Trainer:
                     train_loss = rec_loss + block_reg
                 elif self.reg == "svd":
                     block_reg = block_regularizer(self.model.encoder_output_layer, self.n_conn_comp)
-                    train_loss = rec_loss# + block_reg*(1-ee_coeff)*0.1
+                    train_loss = rec_loss# + block_reg*0.1
                     #blocks = compute_layer_blocks(self.model.encoder_output_layer, self.n_conn_comp)
 
 
@@ -156,13 +163,13 @@ class Trainer:
                 self.optimizer.step()
                 loss += rec_loss.item()
                 if batch_idx%100 == 0:
-                    for batch_features in trainer.test_loader:
+                    for batch_features in self.test_loader:
                         batch_features = batch_features[0]
                         test_examples = batch_features.to(device)
                         break
                     self.model.eval()
-                    outputs = self.model(batch_features)
-                    val_loss = self.criterion(outputs, batch_features)
+                    outputs = self.model(test_examples)
+                    val_loss = self.criterion(outputs, test_examples)
                     print(("Batch {}, training loss {:.4f}, val loss {:.4f}, "
                             "block_reg {:.2f}, "
                             "dropout rate {:.2f}").format(batch_idx+1,
@@ -170,16 +177,17 @@ class Trainer:
                             block_reg.item(), do_rate))
 
                 if (batch_idx)%int(total_batches/(self.bn_size_reduction)) == 0:
+                   self.prune(self.model.decoder_hidden_layer, self.model.encoder_output_layer, self.n_conn_comp)
                     #print(((len(self.train_loader)*n_epochs)/self.batch_size)/(self.final_bn_size))
-                    blocks = compute_layer_blocks_out(self.model.encoder_output_layer, self.n_conn_comp)
-                    re = self.neuron_wise_br(self.model.encoder_output_layer, blocks, test_examples)
-                    removal_mask = torch.ones(self.model.encoder_output_layer.out_features, dtype=torch.bool)
+                    #blocks = compute_layer_blocks_out(self.model.encoder_output_layer, self.n_conn_comp)
+                    #re = self.neuron_wise_br(self.model.encoder_output_layer, blocks, test_examples)
+                    #removal_mask = torch.ones(self.model.encoder_output_layer.out_features, dtype=torch.bool)
                     #print(re)
-                    removal_mask[np.argmin(re)] = 0
-                    self.model.encoder_output_layer.remove_neurons_out(removal_mask)
-                    self.model.decoder_hidden_layer.remove_neurons_in(removal_mask)
-                    print("bn size:"+str(self.model.encoder_output_layer.out_features))
-                    self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
+                    #removal_mask[np.argmin(re)] = 0
+                    #self.model.encoder_output_layer.remove_neurons_out(removal_mask)
+                    #self.model.decoder_hidden_layer.remove_neurons_in(removal_mask)
+                    #print("bn size:"+str(self.model.encoder_output_layer.out_features))
+                    #self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
 
             loss = loss / len(self.train_loader)
             print("Train epoch {}, loss {}".format(e, loss))
@@ -191,7 +199,7 @@ parser.add_argument('--connected_components', type=int)
 parser.add_argument('--bn_size', type=int, default=100)
 parser.add_argument('--n_workers', type=int, default=1)
 parser.add_argument('--dataset')
-parser.add_argument('--regularizer', default = "spectral")
+parser.add_argument('--regularizer', default = "svd")
 args = parser.parse_args()
 
 trainer = Trainer(args)

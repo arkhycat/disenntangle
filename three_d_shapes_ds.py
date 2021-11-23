@@ -7,7 +7,7 @@ import os
 #device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class ThreeDShapes(Dataset):
-    def __init__(self, filename='3dshapes.h5', transform = None, filtered = False, dt_labels = True):
+    def __init__(self, filename='3dshapes.h5', transform = None, filtered = False, dt_labels = True, test_dt_labels = False):
         super(Dataset, self).__init__()
         assert(os.path.exists(filename))
         self.dataset = h5py.File(filename, 'r')
@@ -27,6 +27,7 @@ class ThreeDShapes(Dataset):
         if dt_labels:
             self.n_classes = 8
             l = self.latents
+
             cond_oh = l[:, 2]>0.5 #object hue cooler
             cond_fh = l[:, 0]>0.5 #floor hue cooler
             cond_or = l[:, 5]>0 #orientation
@@ -35,15 +36,26 @@ class ThreeDShapes(Dataset):
             cond_scl = l[:, 3]>1 #scale
             cond_shp2 = l[:, 4]>2 #shape
 
-            self.labels = np.zeros((l.shape[0]), dtype=np.int)
-            self.labels[cond_oh&cond_fh&cond_or]=7
-            self.labels[cond_oh&cond_fh&(~cond_or)]=6
-            self.labels[cond_oh&(~cond_fh)&cond_shp1]=5
-            self.labels[cond_oh&(~cond_fh)&(~cond_shp1)]=4
-            self.labels[(~cond_oh)&cond_wh&cond_scl]=3
-            self.labels[(~cond_oh)&cond_wh&(~cond_scl)]=2
-            self.labels[(~cond_oh)&(~cond_wh)&cond_shp2]=1
-            self.labels[(~cond_oh)&(~cond_wh)&(~cond_shp2)]=0
+            if not test_dt_labels:
+                self.labels = np.zeros((l.shape[0]), dtype=np.int)
+                self.labels[cond_oh&cond_fh&cond_or]=7
+                self.labels[cond_oh&cond_fh&(~cond_or)]=6
+                self.labels[cond_oh&(~cond_fh)&cond_shp1]=5
+                self.labels[cond_oh&(~cond_fh)&(~cond_shp1)]=4
+                self.labels[(~cond_oh)&cond_wh&cond_scl]=3
+                self.labels[(~cond_oh)&cond_wh&(~cond_scl)]=2
+                self.labels[(~cond_oh)&(~cond_wh)&cond_shp2]=1
+                self.labels[(~cond_oh)&(~cond_wh)&(~cond_shp2)]=0
+            else:
+                self.labels = np.zeros((l.shape[0]), dtype=np.int)
+                self.labels[cond_shp1&cond_shp2&cond_oh]=7
+                self.labels[cond_shp1&cond_shp2&(~cond_oh)]=6
+                self.labels[cond_shp1&(~cond_shp2)&cond_wh]=5
+                self.labels[cond_shp1&(~cond_shp2)&(~cond_wh)]=4
+                self.labels[(~cond_shp1)&cond_or&cond_fh]=3
+                self.labels[(~cond_shp1)&cond_or&(~cond_fh)]=2
+                self.labels[(~cond_shp1)&(~cond_or)&cond_scl]=1
+                self.labels[(~cond_shp1)&(~cond_or)&(~cond_scl)]=0
 
         self.image_shape = self.images.shape[1:]  # [64,64,3]
         self.latent_shape = self.latents.shape[1:]  # [6]
