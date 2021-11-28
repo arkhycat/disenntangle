@@ -23,7 +23,7 @@ def block_dropout_mask(blocks, prob):
     return mask.float()
 
 def block_dropout(input, blocks, p):
-    return input*block_dropout_mask(blocks, p).to(input.get_device())
+    return input*block_dropout_mask(blocks, p).to(input.get_device())/(1-p)
 
 def layer_svd(layer):
     masked_weight = layer.weight
@@ -66,18 +66,21 @@ class BlockDropout(nn.Dropout):
     def forward(self, input, do_rate=0):
         if do_rate == 0:
             do_rate = self.p
-        if self.training and self.n_conn_comp > 1:
-            if self.apply_to=="out":
-                blocks = compute_layer_blocks_out(self.layer, self.n_conn_comp)
-            else:
-                blocks = compute_layer_blocks_in(self.layer, self.n_conn_comp)
-            #print(blocks.shape)
-            #blocks = np.zeros(input.shape[1])
-            #blocks[:int(input.shape[0]/2)] = 1
+        if self.training:
+            if self.n_conn_comp > 1:
+                if self.apply_to=="out":
+                    blocks = compute_layer_blocks_out(self.layer, self.n_conn_comp)
+                else:
+                    blocks = compute_layer_blocks_in(self.layer, self.n_conn_comp)
+                #print(blocks.shape)
+                #blocks = np.zeros(input.shape[1])
+                #blocks[:int(input.shape[0]/2)] = 1
 
-            #print(blocks.shape)
-            return block_dropout(input, blocks, do_rate)
-        return F.dropout(input, p=do_rate)
+                #print(blocks.shape)
+                return block_dropout(input, blocks, do_rate)
+            return F.dropout(input, do_rate, self.training)
+        else:
+            return input
 
 class DisentangledLinear(nn.Linear):
     def __init__(self, in_features, out_features):
