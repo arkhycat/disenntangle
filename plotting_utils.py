@@ -11,6 +11,10 @@ def show_dataset_examples(trainer):
     def imshow(img):
         #img = img / 2 + 0.5     # unnormalize
         npimg = img.cpu().numpy()
+        plt.rcParams['xtick.bottom'] = False
+        plt.rcParams['xtick.labelbottom'] = False
+        plt.rcParams['ytick.left'] = False
+        plt.rcParams['ytick.labelleft'] = False
         plt.imshow(np.transpose(npimg, (1, 2, 0)))
         plt.show()
 
@@ -43,7 +47,7 @@ def plot_reconstruction(test_examples, reconstruction):
 def show_reconstruction(test_examples, trainer):
     with torch.no_grad():
         trainer.model.eval()
-        reconstruction = trainer.model(test_examples).cpu()
+        reconstruction = trainer.model(test_examples.cuda()).cpu()
     plot_reconstruction(test_examples, reconstruction)
 
 def get_test_sample(trainer):

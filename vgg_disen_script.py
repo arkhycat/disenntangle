@@ -48,6 +48,7 @@ parser.add_argument("--save_dir", type=str, help="Directory to save models, logs
                     default=os.path.join("outputs", timestampStr))
 parser.add_argument("--deterministic", dest="deterministic", action="store_true")
 parser.add_argument("--no_dt_labels", dest="dt_labels", action="store_false")
+parser.add_argument("--test_dt_tree", dest="test_dt_tree", action="store_true")
 parser.add_argument("--homebrew_model", dest="homebrew_model", action="store_true")
 parser.add_argument("--not_pretrained", dest="pretrained", action="store_false")
 parser.add_argument("--filtered", help="Filter 3dshapes dataset (otherwise the decision tree labels are used)",
@@ -61,7 +62,7 @@ parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "
 parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
 args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
-parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False, pretrained=True)
+parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False, pretrained=True, test_dt_tree=False)
 
 config = dict()
 # Wrapping configuration into a dictionary
@@ -100,8 +101,10 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                                            torchvision.transforms.ToPILImage(), 
                                                            torchvision.transforms.Resize((config["img_size"], config["img_size"])),
                                                            torchvision.transforms.ToTensor()]), 
+                                                           train=True,
                                                            filtered = config["filtered"],
-                                                           dt_labels=config["dt_labels"]),
+                                                           dt_labels=config["dt_labels"],
+                                                           test_dt_labels=config["test_dt_tree"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
     testloader = torch.utils.data.DataLoader(
@@ -110,8 +113,10 @@ if config["dataset"] == SupportedDatasets.THREEDSHAPES.name:
                                                            torchvision.transforms.ToPILImage(), 
                                                            torchvision.transforms.Resize((config["img_size"], config["img_size"])),
                                                            torchvision.transforms.ToTensor()]), 
+                                                           train=False,
                                                            filtered = config["filtered"],
-                                                           dt_labels=config["dt_labels"]),
+                                                           dt_labels=config["dt_labels"],
+                                                           test_dt_labels=config["test_dt_tree"]),
                                           batch_size=config["batch_size"], shuffle=True)
 
     if config["filtered"]:
@@ -292,7 +297,7 @@ def fit(model, train_dataloader, prune_every_n_steps):
         train_running_correct += (preds.cpu() == target).sum().item()
         loss.backward()
         optimizer.step()
-        if (i)%prune_every_n_steps == 0:
+        if config["prune_by"]>0 and (i)%prune_every_n_steps == 0:
             logging.info("Block regularizer "+str(block_reg.item()))
             #plot_blocked_weights(vgg16.classifier[6])
             #plot_blocked_weights(vgg16.classifier[3])
@@ -312,7 +317,10 @@ def fit(model, train_dataloader, prune_every_n_steps):
 n_epochs = config["n_epochs"]
 total_batches = len(trainloader)*n_epochs
 layer_size_reduction = config["prune_by"]
-prune_every_n_steps = int(round(total_batches/(layer_size_reduction)))
+if layer_size_reduction == 0:
+    prune_every_n_steps = total_batches+1
+else:
+    prune_every_n_steps = int(round(total_batches/(layer_size_reduction)))
 
 vgg16_parallel = nn.DataParallel(vgg16, device_ids = gpus) #TODO: no option to just have cpu
 

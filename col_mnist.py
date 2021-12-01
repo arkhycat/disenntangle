@@ -10,7 +10,7 @@ def coloring(img):
     img = img.expand([3, -1, -1]).transpose(0, 2)
     dclr_idx, bclr_idx = random.sample(list(range(len(clrs))), 2)
     dclr, bclr = clrs[dclr_idx], clrs[bclr_idx]
-    img_digit = img * dclr_idx
+    img_digit = img * dclr
     img_background = (1-img) * bclr
     return (img_digit+img_background).transpose(0, 2), dclr_idx, bclr_idx
 
