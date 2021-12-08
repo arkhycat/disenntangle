@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+from sklearn.cluster import KMeans
+
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -36,10 +38,16 @@ def laplacian(adj, norm='sym'):
 
 def blocks_from_svd(u, ncc):
     u = u[:, :ncc].detach().cpu().numpy()
-    uset = []
-    blocks = []
-    for x in (u>0):
-        if str(x) not in uset:
-            uset.append(str(x))
-        blocks.append(uset.index(str(x)))
-    return np.array(blocks)
+
+    kmeans = KMeans(n_clusters=ncc)
+    kmeans.fit(u)
+    y_kmeans = kmeans.predict(u)
+    return y_kmeans
+
+    # uset = []
+    # blocks = []
+    # for x in (u>0):
+    #     if str(x) not in uset:
+    #         uset.append(str(x))
+    #     blocks.append(uset.index(str(x)))
+    # return np.array(blocks)

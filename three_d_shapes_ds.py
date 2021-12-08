@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import h5py
 import os
+from joblib import load
 
 #device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -11,51 +12,24 @@ class ThreeDShapes(Dataset):
         super(Dataset, self).__init__()
         assert(os.path.exists(filename))
         self.dataset = h5py.File(filename, 'r')
-        self.images = self.dataset['images']  # array shape [480000,64,64,3], uint8 in range(256)
-        self.latents = self.dataset['labels']  # array shape [480000,6], float64
+        self.images = self.dataset['images'][:]  # array shape [480000,64,64,3], uint8 in range(256)
+        self.latents = self.dataset['labels'][:]  # array shape [480000,6], float64
+        print(type(self.images))
         self.dt_labels = dt_labels
         if filtered:
             l = self.latents
-            loc = np.where((l[:, 0] <= 0.1) & 
-                            (l[:, 1] <= 0.1) & 
-                            (l[:, 2] <= 0.1) & 
-                            #(l[:, 3] <= 0.13) & 
-                            (l[:, 4] <= 1))# & 
-                            #(l[:, 5] <= -25))
             self.images = self.images[loc[0]]
             self.latents = self.latents[loc[0]]
         if dt_labels:
             self.n_classes = 8
             l = self.latents
 
-            cond_oh = l[:, 2]>0.5 #object hue cooler
-            cond_fh = l[:, 0]>0.5 #floor hue cooler
-            cond_or = l[:, 5]>0 #orientation
-            cond_shp1 = l[:, 4]>1 #shape
-            cond_wh = l[:, 1]>0.5 #wall hue
-            cond_scl = l[:, 3]>1 #scale
-            cond_shp2 = l[:, 4]>2 #shape
-
             if not test_dt_labels:
-                self.labels = np.zeros((l.shape[0]), dtype=np.int)
-                self.labels[cond_oh&cond_fh&cond_or]=7
-                self.labels[cond_oh&cond_fh&(~cond_or)]=6
-                self.labels[cond_oh&(~cond_fh)&cond_shp1]=5
-                self.labels[cond_oh&(~cond_fh)&(~cond_shp1)]=4
-                self.labels[(~cond_oh)&cond_wh&cond_scl]=3
-                self.labels[(~cond_oh)&cond_wh&(~cond_scl)]=2
-                self.labels[(~cond_oh)&(~cond_wh)&cond_shp2]=1
-                self.labels[(~cond_oh)&(~cond_wh)&(~cond_shp2)]=0
+                dt = load('decision_tree_train.joblib') 
+                self.labels = dt.predict(l)
             else:
-                self.labels = np.zeros((l.shape[0]), dtype=np.int)
-                self.labels[cond_shp1&cond_shp2&cond_oh]=7
-                self.labels[cond_shp1&cond_shp2&(~cond_oh)]=6
-                self.labels[cond_shp1&(~cond_shp2)&cond_wh]=5
-                self.labels[cond_shp1&(~cond_shp2)&(~cond_wh)]=4
-                self.labels[(~cond_shp1)&cond_or&cond_fh]=3
-                self.labels[(~cond_shp1)&cond_or&(~cond_fh)]=2
-                self.labels[(~cond_shp1)&(~cond_or)&cond_scl]=1
-                self.labels[(~cond_shp1)&(~cond_or)&(~cond_scl)]=0
+                dt = load('decision_tree_test.joblib') 
+                self.labels = dt.predict(l)
 
         self.image_shape = self.images.shape[1:]  # [64,64,3]
         self.latent_shape = self.latents.shape[1:]  # [6]
@@ -101,10 +75,9 @@ class ThreeDShapes(Dataset):
             ii = np.where(idxs % test_split == 0)[0]
             idxs = idxs[ii]
         idxs = idxs.tolist()
-        print(idxs[:100])
         self.cache_imgs = self.images[idxs]
         self.cache_latents = self.latents[idxs]
         if self.dt_labels:
             self.cached_labels = self.labels[idxs]
-        self.n_cache_accesses = 0
+        print("done loading")
 

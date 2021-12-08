@@ -25,13 +25,16 @@ def block_dropout_mask(blocks, prob):
 def block_dropout(input, blocks, p):
     return input*block_dropout_mask(blocks, p).to(input.get_device())/(1-p)
 
-def layer_svd(layer):
+def get_masked_weight(layer):
     masked_weight = layer.weight
     if layer.in_mask is not None:
         masked_weight = layer.weight[:, layer.in_mask]
     if layer.out_mask is not None:
         masked_weight = masked_weight[layer.out_mask]
+    return masked_weight
 
+def layer_svd(layer):
+    masked_weight = get_masked_weight(layer)
     a_n = normalize_w(masked_weight) #TODO: not sure if this works directly
     return torch.svd(a_n)
 
@@ -39,7 +42,9 @@ def compute_layer_blocks_out(layer, ncc):
     #blocks are computer on the output because the weight matrix is transposed
     u, _, _ = layer_svd(layer)
     blocks = -torch.ones(layer.out_features, dtype=torch.int) #pruned neurons will have value of -1
-    masked_blocks = blocks_from_svd(u, ncc)
+    w = get_masked_weight(layer)
+    d1_inv_root = torch.diag(1/torch.sqrt(torch.abs(w).sum(1)))
+    masked_blocks = blocks_from_svd(torch.matmul(d1_inv_root, u), ncc)
     blocks[layer.out_mask] = torch.tensor(masked_blocks, dtype=torch.int)  #return blocking results back to unmasked shape
     return blocks
 
@@ -47,7 +52,9 @@ def compute_layer_blocks_in(layer, ncc):
     #blocks are computer on the input because the weight matrix is transposed
     _, _, v = layer_svd(layer)
     blocks = -torch.ones(layer.in_features, dtype=torch.int) #pruned neurons will have value of -1
-    masked_blocks = blocks_from_svd(v, ncc)
+    w = get_masked_weight(layer)
+    d2_inv_root = torch.diag(1/torch.sqrt(torch.abs(w).sum(0)))
+    masked_blocks = blocks_from_svd(torch.matmul(d2_inv_root, v), ncc)
     blocks[layer.in_mask] = torch.tensor(masked_blocks, dtype=torch.int) #return blocking results back to unmasked shape
     return blocks
 
@@ -142,11 +149,13 @@ class DisentangledLinear(nn.Linear):
 
     def turn_input_neurons_off(self, mask):
         """ 0s in the mask indicate the neurons being turned off """
-        self.in_mask = torch.tensor(mask, requires_grad=False).to(self.weight.get_device())
+        #self.in_mask = torch.tensor(mask, requires_grad=False).to(self.weight.get_device())
+        self.in_mask = mask.clone().detach().requires_grad_(False).to(self.weight.get_device())
 
     def turn_output_neurons_off(self, mask):
         """ 0s in the mask indicate the neurons being turned off """
-        self.out_mask = torch.tensor(mask, requires_grad=False).to(self.weight.get_device())
+        #self.out_mask = torch.tensor(mask, requires_grad=False).to(self.weight.get_device())
+        self.out_mask = mask.clone().detach().requires_grad_(False).to(self.weight.get_device())
 
     def turn_all_input_neurons_on(self):
         self.in_mask = None
@@ -207,18 +216,18 @@ class AE(nn.Module):
         #print(x.shape)
         x = x.view(-1, self.enc_size)
         #print(x.shape)
-        x = F.dropout(F.tanh(self.encoder_hidden_layer(x)), p=0.2)
-        #x = F.tanh(self.encoder_hidden_layer(x))
-        self.embedding = F.tanh(self.encoder_output_layer(x))
+        x = F.dropout(torch.tanh(self.encoder_hidden_layer(x)), p=0.2)
+        #x = torch.tanh(self.encoder_hidden_layer(x))
+        self.embedding = torch.tanh(self.encoder_output_layer(x))
         #x = F.dropout(self.embedding)
         x = self.embedding
         #if blocks is not None and self.training:
         x = self.block_dropout_1(x, do_rate)
 
         #print(x.shape)
-        #x = self.block_dropout_2(F.tanh(self.decoder_hidden_layer(x)), do_rate)
-        x = F.tanh(self.decoder_hidden_layer(x))
-        x = F.dropout(F.tanh(self.decoder_output_layer(x)), p=0.2)
+        #x = self.block_dropout_2(torch.tanh(self.decoder_hidden_layer(x)), do_rate)
+        x = torch.tanh(self.decoder_hidden_layer(x))
+        x = F.dropout(torch.tanh(self.decoder_output_layer(x)), p=0.2)
         #print(x.shape)
         x = x.view(-1, *self.enc_shape)
         #print(x.shape)
@@ -264,18 +273,18 @@ class AE_baseline(nn.Module):
         #print(x.shape)
         x = x.view(-1, self.enc_size)
         #print(x.shape)
-        x = F.dropout(F.tanh(self.encoder_hidden_layer(x)), p=0.2)
-        #x = F.tanh(self.encoder_hidden_layer(x))
-        self.embedding = F.tanh(self.encoder_output_layer(x))
+        x = F.dropout(torch.tanh(self.encoder_hidden_layer(x)), p=0.2)
+        #x = torch.tanh(self.encoder_hidden_layer(x))
+        self.embedding = torch.tanh(self.encoder_output_layer(x))
         #x = F.dropout(self.embedding)
         x = self.embedding
         #if blocks is not None and self.training:
         x = F.dropout(x, p=0.5)
 
         #print(x.shape)
-        #x = self.block_dropout_2(F.tanh(self.decoder_hidden_layer(x)), do_rate)
-        x = F.dropout(F.tanh(self.decoder_hidden_layer(x)), p=0.5)
-        x = F.dropout(F.tanh(self.decoder_output_layer(x)), p=do_rate)
+        #x = self.block_dropout_2(torch.tanh(self.decoder_hidden_layer(x)), do_rate)
+        x = F.dropout(torch.tanh(self.decoder_hidden_layer(x)), p=0.5)
+        x = F.dropout(torch.tanh(self.decoder_output_layer(x)), p=do_rate)
         #print(x.shape)
         x = x.view(-1, *self.enc_shape)
         #print(x.shape)

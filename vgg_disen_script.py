@@ -18,6 +18,7 @@ from datetime import datetime
 import json
 from models import block_regularizer, compute_layer_blocks_in, compute_layer_blocks_out
 from spectral_utils import normalize_w
+from math import ceil
 
 from three_d_shapes_ds import ThreeDShapes
 from col_mnist import ColMNIST
@@ -49,6 +50,7 @@ parser.add_argument("--save_dir", type=str, help="Directory to save models, logs
 parser.add_argument("--deterministic", dest="deterministic", action="store_true")
 parser.add_argument("--no_dt_labels", dest="dt_labels", action="store_false")
 parser.add_argument("--test_dt_tree", dest="test_dt_tree", action="store_true")
+parser.add_argument("--ininialize_with_blocks", dest="ininialize_with_blocks", action="store_true")
 parser.add_argument("--homebrew_model", dest="homebrew_model", action="store_true")
 parser.add_argument("--not_pretrained", dest="pretrained", action="store_false")
 parser.add_argument("--filtered", help="Filter 3dshapes dataset (otherwise the decision tree labels are used)",
@@ -62,7 +64,7 @@ parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "
 parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
 args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
-parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False, pretrained=True, test_dt_tree=False)
+parser.set_defaults(filtered=False, deterministic=False, dt_labels=True, homebrew_model=False, pretrained=True, test_dt_tree=False, ininialize_with_blocks=False)
 
 config = dict()
 # Wrapping configuration into a dictionary
@@ -187,19 +189,48 @@ else:
 vgg16.to(device)
 
 ncc = config["blocks"] #number of connected components
+if not config["test_dt_tree"]:
+    if config["input_layer"]=="cl3" and config["output_layer"]=="cl6":
+        vgg16.classifier[3] = DisentangledLinear(vgg16.classifier[3].in_features, config["layer_size"]).to(device)
+        vgg16.classifier[6] = DisentangledLinear(config["layer_size"], n_classes).to(device)
+        vgg16.classifier[5] = BlockDropout(vgg16.classifier[6], ncc=ncc, p=config["dropout_p"], apply_to="in")
+    elif config["input_layer"]=="cl0" and config["output_layer"]=="cl3":
+        # disentangle layers right after convolutions
+        vgg16.classifier[0] = DisentangledLinear(vgg16.classifier[0].in_features, config["layer_size"]).to(device)
+        vgg16.classifier[3] = DisentangledLinear(config["layer_size"], vgg16.classifier[3].out_features).to(device)
+        vgg16.classifier[2] = BlockDropout(vgg16.classifier[3], ncc=ncc, p=config["dropout_p"], apply_to="in")
+        vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
 
-if config["input_layer"]=="cl3" and config["output_layer"]=="cl6":
-    vgg16.classifier[3] = DisentangledLinear(vgg16.classifier[3].in_features, config["layer_size"]).to(device)
-    vgg16.classifier[6] = DisentangledLinear(config["layer_size"], n_classes).to(device)
-    vgg16.classifier[5] = BlockDropout(vgg16.classifier[6], ncc=ncc, p=config["dropout_p"], apply_to="in")
-elif config["input_layer"]=="cl0" and config["output_layer"]=="cl3":
-    # disentangle layers right after convolutions
-    vgg16.classifier[0] = DisentangledLinear(vgg16.classifier[0].in_features, config["layer_size"]).to(device)
-    vgg16.classifier[3] = DisentangledLinear(config["layer_size"], vgg16.classifier[3].out_features).to(device)
-    vgg16.classifier[2] = BlockDropout(vgg16.classifier[3], ncc=ncc, p=config["dropout_p"], apply_to="in")
-    vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
+    if config["ininialize_with_blocks"]:
+        # mask0 = np.zeros(vgg16.classifier[0].weight.shape, dtype=float)
+        # x = 0
+        # y = 0
+        # for i in range(ncc):
+        #     x_next = min(x+ceil(int(vgg16.classifier[0].weight.shape[0]/ncc)), vgg16.classifier[0].weight.shape[0]-1)
+        #     y_next = min(y+ceil(int(vgg16.classifier[0].weight.shape[1]/ncc)), vgg16.classifier[0].weight.shape[1]-1)
+        #     mask0[x:x_next, y:y_next] = 1
+        #     x = x_next
+        #     y = y_next
+
+        # vgg16.classifier[0].weight = nn.Parameter((vgg16.classifier[0].weight*torch.tensor(mask0).cuda()).float())
+
+        mask1 = np.zeros(vgg16.classifier[3].weight.shape, dtype=float)
+        x = 0
+        y = 0
+        for i in range(ncc):
+            x_next = min(x+684, vgg16.classifier[3].weight.shape[0]+1)
+            y_next = min(y+68, vgg16.classifier[3].weight.shape[1]+1)
+            mask1[x:x_next, y:y_next] = 1
+            x = x_next-1
+            y = y_next-1
+            print(x, x_next, y, y_next)
+
+        vgg16.classifier[3].weight = nn.Parameter((vgg16.classifier[3].weight*torch.tensor(mask1).cuda()).float())
+        print(vgg16.classifier[3].weight)
+    else:
+        logging.error("Layer combination not supported")
 else:
-    logging.error("Layer combination not supported")
+    vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
 
 for param in vgg16.parameters():
     param.requires_grad = True
@@ -328,6 +359,7 @@ train_loss , train_accuracy = [], []
 val_loss , val_accuracy, br = [], [], []
 
 start = time.time()
+max_epoch_accuracy = 0
 for epoch in range(n_epochs):
     start_e = time.time()
     logging.info("Epoch {}".format(epoch))
@@ -338,7 +370,10 @@ for epoch in range(n_epochs):
     br.append(block_reg)
     val_loss.append(val_epoch_loss)
     val_accuracy.append(val_epoch_accuracy)
-    torch.save(vgg16_parallel.module, os.path.join(config["save_dir"], "model.pt"))
+    if val_epoch_accuracy >= max_epoch_accuracy:
+        print("saved model")
+        torch.save(vgg16_parallel.module, os.path.join(config["save_dir"], "model.pt"))
+        max_epoch_accuracy = val_epoch_accuracy
     end_e = time.time()
     logging.info('Epoch {} took {} minutes '.format(epoch+1, (end_e-start_e)/60))
     
