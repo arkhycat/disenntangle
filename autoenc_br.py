@@ -63,7 +63,7 @@ class Trainer:
         self.optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
         self.n_conn_comp = args.connected_components
         self.bn_size = args.bn_size
-        self.bn_size_reduction = 100
+        self.bn_size_reduction = 40
         self.criterion = nn.MSELoss()
         self.reg = args.regularizer
         self.batch_size = batch_size_train

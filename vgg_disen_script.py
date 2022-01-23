@@ -41,8 +41,9 @@ parser.add_argument("--dataset", type=str, choices=[ds.name for ds in SupportedD
 parser.add_argument("--input_layer", type=str, help="Layer to disentangle", default='cl0')
 parser.add_argument("--output_layer", type=str, help="Layer to disentangle", default='cl3')
 parser.add_argument("--blocks", type=int, help="Number of blocks", default=4)
+parser.add_argument("--layer_size_bottleneck", type=int, help="Size of the disentangled layer", default=200)
 parser.add_argument("--layer_size", type=int, help="Size of the disentangled layer", default=400)
-parser.add_argument("--prune_by", type=int, help="How many neurons we want to remove", default=200)
+parser.add_argument("--prune_by", type=int, help="How many neurons we want to remove", default=160)
 parser.add_argument("--data_dir", type=str, help="Directory to load data from", default='data')
 parser.add_argument("--load_model", type=str, help="")
 parser.add_argument("--save_dir", type=str, help="Directory to save models, logs and plots to", 
@@ -60,7 +61,7 @@ parser.add_argument("--batch_size", type=int, help="", default=32)
 parser.add_argument("--n_epochs", type=int, help="", default=30)
 parser.add_argument("--img_size", type=int, help="", default=32)
 parser.add_argument("--dropout_p", type=float, help="Probability of block dropout", default=0.5)
-parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "Adam"], default="SGD")
+parser.add_argument("--optimizer", type=str, help="Optimizer", choices=["SGD", "Adam"], default="Adam")
 parser.add_argument("--br_coef", type=float, help="Block regularizer coefficient", default=0)
 
 args = parser.parse_args()  # important to put '' in Jupyter otherwise it will complain
@@ -191,16 +192,30 @@ vgg16.to(device)
 ncc = config["blocks"] #number of connected components
 if not config["test_dt_tree"]:
     if config["input_layer"]=="cl3" and config["output_layer"]=="cl6":
-        vgg16.classifier[3] = DisentangledLinear(vgg16.classifier[3].in_features, config["layer_size"]).to(device)
-        vgg16.classifier[6] = DisentangledLinear(config["layer_size"], n_classes).to(device)
+        vgg16.classifier[3] = DisentangledLinear(vgg16.classifier[3].in_features, config["layer_size_bottleneck"]).to(device)
+        vgg16.classifier[6] = DisentangledLinear(config["layer_size_bottleneck"], n_classes).to(device)
         vgg16.classifier[5] = BlockDropout(vgg16.classifier[6], ncc=ncc, p=config["dropout_p"], apply_to="in")
     elif config["input_layer"]=="cl0" and config["output_layer"]=="cl3":
         # disentangle layers right after convolutions
-        vgg16.classifier[0] = DisentangledLinear(vgg16.classifier[0].in_features, config["layer_size"]).to(device)
-        vgg16.classifier[3] = DisentangledLinear(config["layer_size"], vgg16.classifier[3].out_features).to(device)
-        vgg16.classifier[2] = BlockDropout(vgg16.classifier[3], ncc=ncc, p=config["dropout_p"], apply_to="in")
-        vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
+        # vgg16.classifier[0] = DisentangledLinear(vgg16.classifier[0].in_features, config["layer_size"]).to(device)
+        # vgg16.classifier[3] = DisentangledLinear(config["layer_size"], vgg16.classifier[3].out_features).to(device)
+        # vgg16.classifier[2] = BlockDropout(vgg16.classifier[3], ncc=ncc, p=config["dropout_p"], apply_to="in")
+        # vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
+        vgg16.classifier[0] = DisentangledLinear(vgg16.classifier[0].in_features, config["layer_size_bottleneck"]).to(device)
+        vgg16.classifier[3] = DisentangledLinear(config["layer_size_bottleneck"], config["layer_size"]).to(device)
+        vgg16.classifier[2] = BlockDropout(vgg16.classifier[0], ncc=ncc, p=config["dropout_p"], apply_to="out")
+        #vgg16.classifier[6] = nn.Linear(config["layer_size"], n_classes).to(device)
 
+        vgg16.classifier[5] = BlockDropout(vgg16.classifier[3], ncc=ncc, p=config["dropout_p"], apply_to="out")
+        vgg16.classifier[6] = nn.Sequential(
+            # nn.Linear(config["layer_size"], config["layer_size"]),
+            # nn.Dropout(),
+            # nn.ReLU(),
+            # nn.Linear(config["layer_size"], config["layer_size"]),
+            # nn.Dropout(),
+            # nn.ReLU(),
+            nn.Linear(config["layer_size"], n_classes)
+            ).to(device)
     if config["ininialize_with_blocks"]:
         # mask0 = np.zeros(vgg16.classifier[0].weight.shape, dtype=float)
         # x = 0
@@ -230,7 +245,15 @@ if not config["test_dt_tree"]:
     else:
         logging.error("Layer combination not supported")
 else:
-    vgg16.classifier[6] = nn.Linear(vgg16.classifier[6].in_features, n_classes).to(device)
+    vgg16.classifier[6] = nn.Sequential(
+            nn.Linear(config["layer_size"], config["layer_size"]),
+            nn.Dropout(),
+            nn.ReLU(),
+            nn.Linear(config["layer_size"], config["layer_size"]),
+            nn.Dropout(),
+            nn.ReLU(),
+            nn.Linear(config["layer_size"], n_classes)
+            ).to(device)
 
 for param in vgg16.parameters():
     param.requires_grad = True
@@ -240,7 +263,7 @@ logging.info(vgg16)
 if config["optimizer"] == "Adam":
     optimizer = optim.Adam(vgg16.classifier.parameters(), lr=0.001)
 else:
-    optimizer = optim.SGD(vgg16.classifier.parameters(), lr=0.001, momentum=0.9)
+    optimizer = optim.SGD(vgg16.classifier.parameters(), lr=0.001)
 # loss function
 criterion = nn.CrossEntropyLoss()
 
@@ -371,9 +394,9 @@ for epoch in range(n_epochs):
     val_loss.append(val_epoch_loss)
     val_accuracy.append(val_epoch_accuracy)
     if val_epoch_accuracy >= max_epoch_accuracy:
-        print("saved model")
-        torch.save(vgg16_parallel.module, os.path.join(config["save_dir"], "model.pt"))
+        torch.save(vgg16_parallel.module, os.path.join(config["save_dir"], "model_optimal.pt"))
         max_epoch_accuracy = val_epoch_accuracy
+    torch.save(vgg16_parallel.module, os.path.join(config["save_dir"], "model_e{}.pt".format(epoch)))
     end_e = time.time()
     logging.info('Epoch {} took {} minutes '.format(epoch+1, (end_e-start_e)/60))
     

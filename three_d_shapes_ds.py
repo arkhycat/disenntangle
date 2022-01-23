@@ -12,8 +12,8 @@ class ThreeDShapes(Dataset):
         super(Dataset, self).__init__()
         assert(os.path.exists(filename))
         self.dataset = h5py.File(filename, 'r')
-        self.images = self.dataset['images'][:]  # array shape [480000,64,64,3], uint8 in range(256)
-        self.latents = self.dataset['labels'][:]  # array shape [480000,6], float64
+        self.images = np.array(self.dataset['images'][:])  # array shape [480000,64,64,3], uint8 in range(256)
+        self.latents = np.array(self.dataset['labels'][:])  # array shape [480000,6], float64
         print(type(self.images))
         self.dt_labels = dt_labels
         if filtered:
